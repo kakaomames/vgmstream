@@ -57,43 +57,59 @@
 <script src="js/custom-audio.js"></script>
 <script src="js/player.js"></script>
 <script>
-	<script>
-  // 隊長考案：既存の機能をジャックする最小限コード
-  var blobWarehouse = []; // Blobを消さないための倉庫
-
-  // 元の displayFiles を上書き（ジャック）する
+// 隊長からの緊急パッチ：マルチストリーム全救出コード
 async function displayFiles(files) {
     for (const file of files) {
-        // 1. まず1番目を変換して、全部で何個ストリームがあるか確認する
-        let response = await convertFile(file);
+        console.log("📄 ファイル解析開始:", file.name);
+
+        // 1. 仮想ファイルシステムに書き込む
+        const arrayBuffer = await file.arrayBuffer();
+        await cliWorker.send("writeFile", file.name, new Uint8Array(arrayBuffer));
+
+        // 2. まず情報を取得して、全部で何個入っているか確認する
+        const info = await cliWorker.send("vgmstream", "-m", "-i", file.name);
         
-        // ログから「全ストリーム数」を取得（例: "0 / 10" から "10" を探す）
-        const totalStreamsMatch = response.stdout.match(/Stream index: \d+ \/ (\d+)/);
-        const totalStreams = totalStreamsMatch ? parseInt(totalStreamsMatch[1]) : 1;
+        // ログから 0 / 10 の「10」を抽出
+        const match = info.stdout.match(/Stream index: \d+ \/ (\d+)/);
+        const totalStreams = match ? parseInt(match[1]) : 1;
+        
+        console.log(`✅ 合計 ${totalStreams} 個の音声を検出しました。`);
 
-        console.log(`このファイルには ${totalStreams} 個の音が含まれています。`);
-
-        // 2. ストリームの数だけループして変換・DLする
-        for (let s = 1; s <= totalStreams; s++) {
-            console.log(`ストリーム ${s} を処理中...`);
+        // 3. 1つずつ番号を指定して変換・ダウンロード
+        for (let i = 1; i <= totalStreams; i++) {
+            console.log(`🎧 ストリーム ${i} を変換中...`);
             
-            // vgmstreamに関数 "-s 番号" を渡して、特定の音を取り出す
-            // ※既存の convertFile が引数を受け取れるよう、vgmstream を直接叩くイメージ
-            const streamResponse = await cliWorker.send("vgmstream", "-s", s.toString(), "-i", file.name, "-o", "out.wav");
+            const outName = `stream_${i}.wav`;
+            // "-s 番号" で特定のストリームを指定するのがコツ！
+            const res = await cliWorker.send("vgmstream", "-s", i.toString(), "-i", file.name, "-o", outName);
             
-            // 変換後のデータを取得してDL
-            const wavData = await readFile("out.wav");
-            const url = URL.createObjectURL(new Blob([wavData], { type: "audio/x-wav" }));
+            // 変換されたデータを読み込む
+            const wavData = await cliWorker.send("readFile", outName);
             
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `${file.name}_${s}.wav`;
-            link.click();
+            if (wavData) {
+                const blob = new Blob([wavData], { type: "audio/wav" });
+                const url = URL.createObjectURL(blob);
+                
+                // ダウンロード実行
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${file.name}_${i}.wav`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // ブラウザがパンクしないように少し待機
+                await new Promise(r => setTimeout(r, 300));
+            }
             
-            // メモリ解放を防ぐために一瞬待機
-            await new Promise(r => setTimeout(r, 500));
+            // 仮想ファイル内のゴミ掃除
+            await cliWorker.send("deleteFile", outName);
         }
+        
+        // 最後に元のファイルも削除
+        await cliWorker.send("deleteFile", file.name);
     }
+    alert("全ストリームの救出任務、完了しました！");
 }
 </script>
 </body>
