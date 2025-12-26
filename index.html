@@ -56,5 +56,35 @@
 <script src="js/soundbuffer.js"></script>
 <script src="js/custom-audio.js"></script>
 <script src="js/player.js"></script>
+<script>
+	<script>
+  // 隊長考案：既存の機能をジャックする最小限コード
+  var blobWarehouse = []; // Blobを消さないための倉庫
+
+  // 元の displayFiles を上書き（ジャック）する
+  async function displayFiles(files) {
+    for (const file of files) {
+      console.log("処理開始: " + file.name);
+      
+      // 1. Workerに変換を依頼（元のコードの関数を呼び出す）
+      const response = await convertFile(file);
+      
+      // 2. 倉庫に保存してBlobリンクが消えるのを防ぐ
+      blobWarehouse.push(response.url);
+      
+      // 3. 画面のプレイヤーとファイル名をセット
+      audio.src = response.url;
+      dlfilename = response.outputFilename;
+      
+      // 4. 元からあるダウンロードボタンを自動で「ポチッ」と押す
+      download.click();
+      
+      // 5. ブラウザがDL処理をさばくための休憩時間
+      await new Promise(r => setTimeout(r, 800));
+    }
+    alert("全ファイルの変換とダウンロード指示が完了しました！");
+  }
+</script>
+</script>
 </body>
 </html>
