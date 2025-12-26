@@ -62,29 +62,39 @@
   var blobWarehouse = []; // Blobを消さないための倉庫
 
   // 元の displayFiles を上書き（ジャック）する
-  async function displayFiles(files) {
+async function displayFiles(files) {
     for (const file of files) {
-      console.log("処理開始: " + file.name);
-      
-      // 1. Workerに変換を依頼（元のコードの関数を呼び出す）
-      const response = await convertFile(file);
-      
-      // 2. 倉庫に保存してBlobリンクが消えるのを防ぐ
-      blobWarehouse.push(response.url);
-      
-      // 3. 画面のプレイヤーとファイル名をセット
-      audio.src = response.url;
-      dlfilename = response.outputFilename;
-      
-      // 4. 元からあるダウンロードボタンを自動で「ポチッ」と押す
-      download.click();
-      
-      // 5. ブラウザがDL処理をさばくための休憩時間
-      await new Promise(r => setTimeout(r, 800));
+        // 1. まず1番目を変換して、全部で何個ストリームがあるか確認する
+        let response = await convertFile(file);
+        
+        // ログから「全ストリーム数」を取得（例: "0 / 10" から "10" を探す）
+        const totalStreamsMatch = response.stdout.match(/Stream index: \d+ \/ (\d+)/);
+        const totalStreams = totalStreamsMatch ? parseInt(totalStreamsMatch[1]) : 1;
+
+        console.log(`このファイルには ${totalStreams} 個の音が含まれています。`);
+
+        // 2. ストリームの数だけループして変換・DLする
+        for (let s = 1; s <= totalStreams; s++) {
+            console.log(`ストリーム ${s} を処理中...`);
+            
+            // vgmstreamに関数 "-s 番号" を渡して、特定の音を取り出す
+            // ※既存の convertFile が引数を受け取れるよう、vgmstream を直接叩くイメージ
+            const streamResponse = await cliWorker.send("vgmstream", "-s", s.toString(), "-i", file.name, "-o", "out.wav");
+            
+            // 変換後のデータを取得してDL
+            const wavData = await readFile("out.wav");
+            const url = URL.createObjectURL(new Blob([wavData], { type: "audio/x-wav" }));
+            
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `${file.name}_${s}.wav`;
+            link.click();
+            
+            // メモリ解放を防ぐために一瞬待機
+            await new Promise(r => setTimeout(r, 500));
+        }
     }
-    alert("全ファイルの変換とダウンロード指示が完了しました！");
-  }
-</script>
+}
 </script>
 </body>
 </html>
