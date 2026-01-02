@@ -1,0 +1,66 @@
+name: Transpile SO to WASM
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  transpile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📦 コードをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: 🛠️ LLVMツールのインストール
+        run: |
+          sudo apt update
+          sudo apt install -y llvm clang
+          echo "llvm_installed: true"
+
+      - name: 🏗️ Emscripten SDK (emsdk) のセットアップ
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          echo "emsdk_setup: complete"
+
+      - name: 🔍 ビットコードの抽出 (.so -> .bc)
+        run: |
+          # libフォルダ内の.soファイルを対象にする
+          SO_FILE=$(ls lib/*.so | head -n 1)
+          echo "target_so:${SO_FILE}"
+          
+          # ビットコードセクションを抜き出す！
+          llvm-objcopy --dump-section .llvmbc=extracted.bc $SO_FILE || echo "Warning: Section .llvmbc not found, trying direct use"
+          
+          # もしセクションがなければ、.so自体がビットコードの可能性もあるのでコピー
+          if [ ! -f extracted.bc ]; then cp $SO_FILE extracted.bc; fi
+          echo "extracted_bc_size:$(du -h extracted.bc)"
+
+      - name: ⚙️ EmscriptenでWASMに翻訳
+        run: |
+          source ./emsdk/emsdk_env.sh
+          
+          # 翻訳開始！
+          emcc extracted.bc -o converted_library.js \
+            -O3 \
+            -s WASM=1 \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s EXPORTED_RUNTIME_METHODS='["FS", "callMain", "stringToUTF8", "UTF8ToString"]' \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME='MyCustomModule' \
+            -s EXIT_RUNTIME=1 \
+            --no-entry
+          
+          echo "transpile_status: SUCCESS"
+
+      - name: 📤 成果物(WASM/JS)を保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-transpiled-lib
+          path: |
+            converted_library.js
+            converted_library.wasm
