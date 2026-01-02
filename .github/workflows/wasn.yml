@@ -1,0 +1,53 @@
+name: Build vgmstream-web (WASM)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # 手動実行ボタンも追加！
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📦 コードをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 🛠️ 依存パッケージのインストール
+        run: |
+          sudo apt update
+          sudo apt install -y git cmake make
+          echo "packages_installed: true"
+
+      - name: 🏗️ Emscripten SDK (emsdk) のセットアップ
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          echo "emsdk_setup: complete"
+
+      - name: 💎 vgmstream 本体を入手
+        run: |
+          git clone https://github.com/vgmstream/vgmstream.git
+          echo "vgmstream_cloned: true"
+
+      - name: ⚙️ コンパイル開始 (vgmstream-cli.wasm)
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cd vgmstream
+          mkdir -p embuild
+          cd embuild
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          echo "compile_status: SUCCESS"
+
+      - name: 📤 成果物をアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: vgmstream-web-dist
+          path: |
+            vgmstream/embuild/cli/vgmstream-cli.js
+            vgmstream/embuild/cli/vgmstream-cli.wasm
