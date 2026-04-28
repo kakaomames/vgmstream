@@ -4,6 +4,7 @@ var wasmDir = "https://vgmstream.org/web/"
 
 async function messageEvent(data){
 	var input = data.content
+	console.log(input);
 	var output
 	var error
 	try{
@@ -28,10 +29,12 @@ async function messageEvent(data){
 				break
 			default:
 				error = new Error("Unknown message subject")
+				console.log(error);
 				break
 		}
 	}catch(e){
 		error = cleanError(e)
+		console.log(error);
 	}
 	return postMessage({
 		symbol: data.symbol,
