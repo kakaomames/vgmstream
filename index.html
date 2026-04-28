@@ -21,11 +21,11 @@
 	<input type="file" multiple id="browse">
 	<input type="file" webkitdirectory id="browsedir">
 	<div id="buttons" data-nosnippet>
-		<button class="greenbutton" id="selectbtn">Select or drop an audio stream file here...</button>
-		<button class="greenbutton" id="selectdirbtn">Folder</button>
+		<button class="greenbutton" id="selectbtn">ここで音声ストリームファイルを選択またはドロップしてください...</button>
+		<button class="greenbutton" id="selectdirbtn">フォルダ</button>
 	</div>
-	<noscript><div data-nosnippet>This page requires JavaScript to be enabled in your browser.</div></noscript>
-	<div id="wasmwarning" data-nosnippet>This page requires WebAssembly to be enabled in your browser.</div>
+	<noscript><div data-nosnippet>このページを使用するには、ブラウザでJavaScriptを有効にする必要があります。</div></noscript>
+	<div id="wasmwarning" data-nosnippet>このページでは、ブラウザでWebAssemblyを有効にする必要があります。</div>
 	<div id="directorybox">
 		<form>
 			<select id="dirselect" size="2"></select>
@@ -37,7 +37,7 @@
 		<div><custom-audio id="audio" controls></custom-audio></div>
 		<div><input id="download" class="button" type="button" value="Download"></div>
 		<div id="logbox">
-			<a id="logdropdown" tabindex="0">vgmstream output</a>
+			<a id="logdropdown" tabindex="0">Vgmstream の出力</a>
 			<div id="log"></div>
 		</div>
 	</div>
@@ -45,9 +45,9 @@
 <div id="footer" data-nosnippet>
 	<ul>
 		<li><a href="https://github.com/vgmstream/vgmstream">vgmstream</a></li>
-		<li><a href="https://github.com/KatieFrogs">Katie Frogs</a></li>
+		<li><a href="https://github.com/KatieFrogs">ケイティ・フロッグス</a></li>
 		<li>
-			<a id="darktoggle" tabindex="0">Dark theme</a>
+			<a id="darktoggle" tabindex="0">ダークテーマ</a>
 			<a id="darkreset" tabindex="0" title="Reset">(x)</a>
 		</li>
 	</ul>
@@ -58,6 +58,92 @@
 <script src="js/player.js"></script>
 <script>
 async function displayFiles(files) {
+    missionLog("ACTION", "displayFiles開始: 処理対象ファイル数 = " + files.length);
+    for (const file of files) {
+        console.log("📄 ファイル解析開始:", file.name);
+        missionLog("INFO", "現在の処理ファイル: " + file.name + " (サイズ: " + file.size + " bytes)");
+
+        // 1. ファイルをWorkerの仮想メモリにしっかり書き込む
+        const arrayBuffer = await file.arrayBuffer();
+        missionLog("INFO", file.name + " のArrayBuffer取得完了。Workerへ書き込みを開始します。");
+        
+        await cliWorker.send("writeFile", file.name, new Uint8Array(arrayBuffer));
+        missionLog("SUCCESS", "Workerへの書き込み完了: " + file.name);
+
+        // 2. vgmstreamに「情報だけ出して」と命令（-m オプション）
+        missionLog("ACTION", "vgmstream情報取得実行中 (-m -i) ...");
+        const info = await cliWorker.send("vgmstream", "-m", "-i", file.name);
+        
+        missionLog("DATA", "vgmstreamからのstdoutレスポンス: " + info.stdout);
+        missionLog("DATA", "vgmstreamからのstderrレスポンス: " + info.stderr);
+        
+        // 3. ログ（stdout）からストリーム数を探し出す
+        const streamMatch = info.stdout.match(/Stream index: \d+ \/ (\d+)/);
+        missionLog("INFO", "正規表現(Stream index)マッチ結果: " + JSON.stringify(streamMatch));
+        
+        let totalStreams = streamMatch ? parseInt(streamMatch[1]) : 1;
+        missionLog("VALUE", "暫定totalStreams: " + totalStreams);
+
+        // 【緊急対策】もし正規表現で取れなくても、ログに「Streams: 10」などがあればそれを取る
+        if (totalStreams === 1) {
+            missionLog("WARN", "ストリーム数が1のため、緊急対策(Streams: n)の正規表現を試行します。");
+            const altMatch = info.stdout.match(/Streams: (\d+)/i);
+            missionLog("INFO", "緊急対策マッチ結果: " + JSON.stringify(altMatch));
+            
+            if (altMatch) {
+                totalStreams = parseInt(altMatch[1]);
+                missionLog("VALUE", "緊急対策によりtotalStreamsを更新: " + totalStreams);
+            }
+        }
+
+        console.log(`✅ 合計 ${totalStreams} 個の音声を検出しました。`);
+        missionLog("INFO", "最終決定された総ストリーム数: " + totalStreams);
+
+        // 4. ループで1つずつ救出
+        for (let i = 1; i <= totalStreams; i++) {
+            console.log(`🎧 ストリーム ${i} / ${totalStreams} を変換中...`);
+            missionLog("ACTION", "ループ処理開始: ストリーム番号 " + i + " / " + totalStreams);
+            
+            const outName = `output_${i}.wav`;
+            missionLog("INFO", "出力ファイル名設定: " + outName);
+
+            // "-s 番号" で確実に指定
+            missionLog("ACTION", "vgmstream変換実行 (-s " + i + ") ...");
+            await cliWorker.send("vgmstream", "-s", i.toString(), "-i", file.name, "-o", outName);
+            
+            missionLog("ACTION", outName + " の読み込みを試行します。");
+            const wavData = await cliWorker.send("readFile", outName);
+            
+            missionLog("INFO", "wavDataの取得結果: " + (wavData ? "成功 (" + wavData.length + " bytes)" : "失敗(null)"));
+
+            if (wavData) {
+                const url = URL.createObjectURL(new Blob([wavData], { type: "audio/wav" }));
+                missionLog("INFO", "Blob URL生成完了: " + url);
+                
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${file.name}_stream${i}.wav`;
+                missionLog("ACTION", "ダウンロードリンクをキックします: " + link.download);
+                link.click();
+                
+                missionLog("INFO", "DL詰まり防止のため500ms待機中...");
+                await new Promise(r => setTimeout(r, 500)); 
+                missionLog("INFO", "待機終了。");
+            } else {
+                missionLog("ERROR", outName + " のデータが取得できなかったため、ダウンロードをスキップしました。");
+            }
+            
+            missionLog("ACTION", "一時ファイル削除: " + outName);
+            await cliWorker.send("deleteFile", outName);
+        }
+        
+        missionLog("ACTION", "元ファイル削除: " + file.name);
+        await cliWorker.send("deleteFile", file.name);
+    }
+    console.log("✅ 全行程終了！");
+    missionLog("SUCCESS", "displayFilesの全行程が正常に終了しました。総員撤収！");
+}
+/*async function displayFiles(files) {
     for (const file of files) {
         console.log("📄 ファイル解析開始:", file.name);
 
@@ -105,6 +191,7 @@ async function displayFiles(files) {
     }
     console.log("✅ 全行程終了！");
 }
+*/
 </script>
 </body>
 </html>
